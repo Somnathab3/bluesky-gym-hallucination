@@ -6,14 +6,15 @@ from .hallucination_wrapper import HallucinationWrapper
 
 # Register hallucination variants of all base BlueSky-Gym environments
 BASE_ENVS = [
-    "DescentEnv-v0",
-    "AscentEnv-v0", 
-    "SectorEnv-v0",
-    "TaxiEnv-v0",
-    "MergeEnv-v0",
-    "ConflictEnv-v0",
-    "StackEnv-v0"
+  "DescentEnv-v0",
+  "VerticalCREnv-v0",
+  "PlanWaypointEnv-v0",
+  "HorizontalCREnv-v0",
+  "SectorCREnv-v0",
+  "StaticObstacleEnv-v0",
+  "MergeEnv-v0",
 ]
+
 
 def register_hallucination_envs():
     """Register all hallucination-enabled environment variants"""

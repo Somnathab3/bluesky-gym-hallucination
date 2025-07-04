@@ -1,68 +1,172 @@
-# BlueSky-Gym
-A gymnasium style library for standardized Reinforcement Learning research in Air Traffic Management developed in Python.
-Build on [BlueSky](https://github.com/TUDelft-CNS-ATM/bluesky) and The Farama Foundation's [Gymnasium](https://github.com/Farama-Foundation/Gymnasium)
 
-<p align="center">
-    <img src="https://github.com/user-attachments/assets/6ae83579-78af-4cb7-8096-3a10af54a5c5" width=50% height=50%><br/>
-    <em>An example trained agent attempting the merge environment available in BlueSky-Gym.</em>
-</p>
+## bluesky_gym_hallucination/README.md
 
-For a complete list of the currently available environments click [here](bluesky_gym/envs/README.md)
+# BlueSky-Gym Hallucination Detection Add-On
+
+## Overview
+
+This module extends BlueSky-Gym with hallucination injection capabilities for ML safety research in air traffic control. It provides controlled simulation of the phantom intruder phenomenon that can cause dangerous decision-making in AI-based ATC systems.
+
+## Key Research Applications
+
+- **Safety Margin Quantification**: Measure how hallucinations affect separation distances and conflict resolution
+- **Training Data Boundary Analysis**: Test ML model behavior outside operational envelopes  
+- **Stress Testing**: Evaluate model robustness under adversarial sensor conditions
+- **Certification Support**: Generate evidence for AI safety assurance in critical ATC applications
 
 ## Installation
-**Update 27 February 2025:** *There is currently a bug when pip installing BlueSky-Simulator, which causes the pip install to fail on most machines (see [issue](https://github.com/TUDelft-CNS-ATM/bluesky/issues/543)). For now, users can clone the repository linked in [this](https://github.com/TUDelft-CNS-ATM/bluesky-gym/tree/main_bluesky) branch and pip install the requirements.txt file to circumvent this problem. This branch contains a local, barebones, version of BlueSky-Simulator from which the required functionality is retrieved.*
 
-`pip install bluesky-gym`
+```bash
+pip install -e .
+```
 
-Note that the pip package is `bluesky-gym`, for usage however, import as `bluesky_gym`.
+## Quick Start
 
-## Usage
-Using the environments follows the standard API from Gymnasium, an example of which is given below:
+### Basic Usage
 
 ```python
 import gymnasium as gym
-import bluesky_gym
-bluesky_gym.register_envs()
+import bluesky_gym_hallucination
 
-env = gym.make('MergeEnv-v0', render_mode='human')
+# Create hallucination-enabled environment
+env = gym.make("ConflictEnv-Hallucination-v0")
 
-obs, info = env.reset()
-done = truncated = False
-while not (done or truncated):
-    action = ... # Your agent code here
-    obs, reward, done, truncated, info = env.step(action)
+# Configure hallucination parameters
+env.unwrapped.set_hallucination_params(p_halluc=0.1, magnitude=3.0)
+
+# Training loop with hallucination analytics
+for episode in range(100):
+    obs, info = env.reset()
+    
+    while True:
+        action = your_model.predict(obs)
+        obs, reward, terminated, truncated, info = env.step(action)
+        
+        # Check if hallucination occurred this step
+        if info["hallucinated"]:
+            print(f"Hallucination detected at step {info['hallucination_stats']['total_steps']}")
+        
+        if terminated or truncated:
+            break
+    
+    # Analyze episode hallucination impact
+    stats = env.unwrapped.get_detector().get_statistics()
+    print(f"Episode {episode}: {stats['current_episode_hallucinations']} hallucinations")
 ```
 
-Additionally you can directly use algorithms from standardized libraries such as [Stable-Baselines3](https://stable-baselines3.readthedocs.io/en/master/) or [RLlib](https://docs.ray.io/en/latest/rllib/index.html) to train a model:
+### Advanced Research Configuration
 
 ```python
-import gymnasium as gym
-import bluesky_gym
-from stable_baselines3 import DDPG
-bluesky_gym.register_envs()
+# Create custom hallucination environment
+from bluesky_gym_hallucination import make_hallucination_env
 
-env = gym.make('MergeEnv-v0', render_mode=None)
-model = DDPG("MultiInputPolicy",env)
-model.learn(total_timesteps=2e6)
-model.save()
+env = make_hallucination_env(
+    base_env_id="SectorEnv-v0",
+    p_halluc=0.15,        # 15% hallucination probability
+    magnitude=2.5,        # 2.5x magnitude scaling
+    render_mode="human"   # Visual debugging
+)
+
+# Access detailed analytics
+detector = env.get_detector()
+
+# Training with hallucination correlation analysis
+conflict_events = []
+for step in range(1000):
+    obs, reward, terminated, truncated, info = env.step(action)
+    
+    # Log conflicts for safety impact analysis
+    if 'conflicts' in info and info['conflicts']:
+        conflict_events.extend([
+            {'step': step, 'severity': len(info['conflicts'])}
+        ])
+
+# Compute safety impact metrics
+safety_metrics = detector.compute_safety_impact_metrics(conflict_events)
+print(f"Hallucination-conflict correlation: {safety_metrics['correlation']:.3f}")
 ```
 
-## Contributing and Assistance
-If you would like to contribute to BlueSky-Gym or need assistance in setting up or creating your own environments, do not hesitate to open an issue or reach out to one of us via the BlueSky-Gym [Discord](https://discord.gg/s7CdxcSX).
-Additionally you can have a look at the [roadmap](https://github.com/TUDelft-CNS-ATM/bluesky-gym/issues/24) for inspiration on where you can contribute and to get an idea of the direction BlueSky-Gym is going.
+## Available Environments
 
+All base BlueSky-Gym environments have hallucination variants:
 
-## Citing
+- `DescentEnv-Hallucination-v0`
+- `AscentEnv-Hallucination-v0`
+- `SectorEnv-Hallucination-v0`
+- `TaxiEnv-Hallucination-v0`
+- `MergeEnv-Hallucination-v0`
+- `ConflictEnv-Hallucination-v0`
+- `StackEnv-Hallucination-v0`
 
-If you use BlueSky-Gym in your work, please cite it using:
+## Parameter Tuning Guidelines
+
+### Hallucination Probability (`p_halluc`)
+- **Low (0.01-0.05)**: Realistic operational conditions
+- **Medium (0.05-0.15)**: Stress testing scenarios  
+- **High (0.15-0.30)**: Extreme adversarial conditions
+- **Research Range**: 0.0-1.0 (higher values for boundary testing)
+
+### Magnitude Scaling (`magnitude`)
+- **Conservative (1.0-2.0)**: Subtle sensor noise simulation
+- **Moderate (2.0-3.5)**: Significant phantom readings
+- **Aggressive (3.5-5.0+)**: Severe hallucination effects
+- **Research Range**: 1.0+ (unbounded for extreme testing)
+
+## Research Integration
+
+### Training Data Boundary Testing
+
+```python
+# Test model behavior outside training envelope
+boundary_test_configs = [
+    {"p_halluc": 0.05, "magnitude": 1.5},  # Nominal
+    {"p_halluc": 0.20, "magnitude": 3.0},  # Moderate stress
+    {"p_halluc": 0.40, "magnitude": 5.0},  # Extreme stress
+]
+
+results = {}
+for config in boundary_test_configs:
+    env.set_hallucination_params(**config)
+    results[str(config)] = run_evaluation(env, episodes=50)
+```
+
+### Monte Carlo Safety Analysis
+
+```python
+# Generate large-scale hallucination impact datasets
+import numpy as np
+
+halluc_probs = np.linspace(0.0, 0.3, 31)
+magnitudes = np.logspace(0, 1, 11)  # 1.0 to 10.0
+
+safety_matrix = np.zeros((len(halluc_probs), len(magnitudes)))
+
+for i, p in enumerate(halluc_probs):
+    for j, mag in enumerate(magnitudes):
+        env.set_hallucination_params(p_halluc=p, magnitude=mag)
+        safety_score = evaluate_safety_performance(env)
+        safety_matrix[i, j] = safety_score
+```
+
+## Performance Metrics
+
+The detector automatically tracks key research metrics:
+
+- **Detection Rate**: Frequency of hallucination events
+- **Magnitude Distribution**: Statistical analysis of hallucination severity
+- **Temporal Patterns**: Time-series analysis of hallucination occurrence
+- **Safety Correlation**: Relationship between hallucinations and conflicts
+- **Episode Statistics**: Per-episode hallucination impact analysis
+
+## Citation
+
+If using this module for research, please cite:
+
 ```bibtex
-@misc{bluesky-gym,
-  author = {Groot, DJ and Leto, G and Vlaskin, A and Moec, A and Ellerbroek, J},
-  title = {BlueSky-Gym: Reinforcement Learning Environments for Air Traffic Applications},
-  year = {2024},
-  journal = {SESAR Innovation Days 2024},
+@misc{bluesky_gym_hallucination,
+    title={BlueSky-Gym Hallucination Detection Framework},
+    author={Panigrahi, Somnath},
+    year={2025},
+    note={ML Hallucination Quantification for Air Traffic Control Safety}
 }
 ```
-
-List of publications & preprints using `BlueSky-Gym` (please open a pull request to add missing entries):
-*   _missing entry_

@@ -44,3 +44,8 @@ def register_envs():
         entry_point="bluesky_gym.envs.merge_env:MergeEnv",
         max_episode_steps=50,
     )
+       register(
+        id="MARL-v0",
+        entry_point="bluesky_gym.envs.marl_conflict_env:MARL",
+        max_episode_steps=50,
+    )

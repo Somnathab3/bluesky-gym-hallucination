@@ -1,6 +1,10 @@
 [project]
-name = "bluesky-gym"
+name = "bluesky-gym-hallucination"
 version = "0.1.0"
+description = "An extended Gymnasium environment for Air Traffic Management RL research, featuring hallucination detection and combined horizontal/vertical conflict resolution."
+readme = "README.md"
+requires-python = ">=3.10"
+
 dependencies = [
     "torch==2.6.0",
     "pygame==2.6.1",
@@ -10,36 +14,26 @@ dependencies = [
     "bluesky-simulator==1.0.3",
 ]
 
-authors = [
-  { name="Jan Groot", email="d.j.groot@tudelft.nl" },
-  { name="Joost Ellerbroek", email="j.ellerbroek@tudelft.nl" },
-  { name="Giulia Leto", email="g.leto@tudelft.nl" },
-  { name="Sasha Vlaskin", email="a.vlaskin@tudelft.nl" },
-]
-description = "A gymnasium style environment for standardized Reinforcement Learning research in Air Traffic Management."
-readme = "README.md"
-requires-python = ">=3.10"
-classifiers = [
-    "Programming Language :: Python :: 3",
-    "Development Status :: 4 - Beta",
-
-    "Intended Audience :: Science/Research",
-    "Topic :: Scientific/Engineering",
-
-    "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
-
-    "Operating System :: OS Independent",
-]
+[project.authors]
+# Original project maintainers
+Jan Groot = { email = "d.j.groot@tudelft.nl" }
+Joost Ellerbroek = { email = "j.ellerbroek@tudelft.nl" }
+Giulia Leto = { email = "g.leto@tudelft.nl" }
+Sasha Vlaskin = { email = "a.vlaskin@tudelft.nl" }
+# Additional contributor
+Somnath Panigrahi = { email = "ssomnathab3@gmail.com" }
 
 [project.urls]
-Homepage = "https://github.com/TUDelft-CNS-ATM/bluesky-gym"
-Issues = "https://github.com/TUDelft-CNS-ATM/bluesky-gym/issues"
+Homepage = "https://github.com/Somnathab3/bluesky-gym-hallucination"
+Repository = "https://github.com/Somnathab3/bluesky-gym-hallucination"
+Issues     = "https://github.com/Somnathab3/bluesky-gym-hallucination/issues"
 
 [build-system]
-requires = ["hatchling"]
+requires    = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.sdist]
 include = [
   "bluesky_gym/*",
+  "bluesky_gym_hallucination/*",
 ]

@@ -6,20 +6,20 @@ readme = "README.md"
 requires-python = ">=3.10"
 
 dependencies = [
-    "torch==2.6.0",
-    "pygame==2.6.1",
-    "gymnasium==1.1.1",
-    "stable-baselines3==2.6.0",
-    "numpy==2.2.4",
-    "bluesky-simulator==1.0.3",
+  "torch==2.6.0",
+  "pygame==2.6.1",
+  "gymnasium==1.1.1",
+  "stable-baselines3==2.6.0",
+  "numpy==2.2.4",
+  "bluesky-simulator==1.0.3",
 ]
 
-# ← Correct placement: authors belongs in [project], not a subtable
+# Authors must be here, as a list of tables:
 authors = [
   { name = "Jan Groot",           email = "d.j.groot@tudelft.nl" },
   { name = "Joost Ellerbroek",    email = "j.ellerbroek@tudelft.nl" },
   { name = "Giulia Leto",         email = "g.leto@tudelft.nl" },
-  { name = "Sasha Vlaskin",       email = "a.vlaskin@tudelft.nl" },
+  { name = "Sasha Vlaskin",        email = "a.vlaskin@tudelft.nl" },
   { name = "Somnath Panigrahi",   email = "somnath.panigrahi@example.com" },
 ]
 
@@ -36,4 +36,10 @@ build-backend = "hatchling.build"
 include = [
   "bluesky_gym/*",
   "bluesky_gym_hallucination/*",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = [
+  "bluesky_gym",
+  "bluesky_gym_hallucination"
 ]

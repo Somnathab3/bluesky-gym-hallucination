@@ -15,13 +15,13 @@ dependencies = [
 ]
 
 [project.authors]
-authors = [
-  { name = "Jan Groot",         email = "d.j.groot@tudelft.nl" },
-  { name = "Joost Ellerbroek",  email = "j.ellerbroek@tudelft.nl" },
-  { name = "Giulia Leto",       email = "g.leto@tudelft.nl" },
-  { name = "Sasha Vlaskin",      email = "a.vlaskin@tudelft.nl" },
-  { name = "Somnath Panigrahi", email = "somnath.panigrahi@example.com" } # Additional contributor
-]
+# Original project maintainers
+Jan Groot = { email = "d.j.groot@tudelft.nl" }
+Joost Ellerbroek = { email = "j.ellerbroek@tudelft.nl" }
+Giulia Leto = { email = "g.leto@tudelft.nl" }
+Sasha Vlaskin = { email = "a.vlaskin@tudelft.nl" }
+# Additional contributor
+Somnath Panigrahi = { email = "somnath.panigrahi@example.com" }
 
 [project.urls]
 Homepage = "https://github.com/Somnathab3/bluesky-gym-hallucination"

@@ -660,7 +660,7 @@ class CustomHorizontalCREnv(gym.Env):
             if recent_events:
                 # Apply penalty proportional to severity
                 total_severity = sum(event['severity_score'] for event in recent_events)
-                hallucination_reward = -BASE_HALLUCINATION_PENALTY * total_severity
+                hallucination_reward = BASE_HALLUCINATION_PENALTY * total_severity
 
         total_reward = reach_reward + drift_reward + intrusion_reward + hallucination_reward
         self.total_reward += total_reward

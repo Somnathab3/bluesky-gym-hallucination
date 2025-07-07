@@ -6,12 +6,12 @@ readme = "README.md"
 requires-python = ">=3.10"
 
 dependencies = [
-  "torch==2.6.0",
-  "pygame==2.6.1",
-  "gymnasium==1.1.1",
-  "stable-baselines3==2.6.0",
-  "numpy==2.2.4",
-  "bluesky-simulator==1.0.3",
+    "torch",
+    "pygame",
+    "gymnasium",
+    "stable-baselines3",
+    "numpy",
+    "bluesky-simulator>=1.0.7",
 ]
 
 # Authors must be here, as a list of tables:

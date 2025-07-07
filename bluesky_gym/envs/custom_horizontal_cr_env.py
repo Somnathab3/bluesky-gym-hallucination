@@ -328,7 +328,7 @@ class CustomHorizontalCREnv(gym.Env):
         safety_margin_ratio = min_distance / self.intrusion_distance
         
         return {
-            "observation_confidence": np.array([confidence]),
+            "observation_confidence": np.array([confidence], dtype=np.float64)),
             "boundary_proximity": np.array([boundary_proximity]),
             "anomaly_score": np.array([anomaly_score]),
             "safety_margin_ratio": np.array([safety_margin_ratio])

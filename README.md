@@ -1,60 +1,108 @@
-# BlueSky-Gym
-A gymnasium style library for standardized Reinforcement Learning research in Air Traffic Management developed in Python.
-Build on [BlueSky](https://github.com/TUDelft-CNS-ATM/bluesky) and The Farama Foundation's [Gymnasium](https://github.com/Farama-Foundation/Gymnasium)
+````markdown
+## BlueSky-Gym
+A gymnasium-style library for standardized Reinforcement Learning research in Air Traffic Management, developed in Python.
+
+Built on [BlueSky](https://github.com/TUDelft-CNS-ATM/bluesky) and The Farama Foundation's [Gymnasium](https://github.com/Farama-Foundation/Gymnasium).
 
 <p align="center">
-    <img src="https://github.com/user-attachments/assets/6ae83579-78af-4cb7-8096-3a10af54a5c5" width=50% height=50%><br/>
+    <img src="https://github.com/user-attachments/assets/6ae83579-78af-4cb7-8096-3a10af54a5c5" width="50%" height="50%"><br/>
     <em>An example trained agent attempting the merge environment available in BlueSky-Gym.</em>
 </p>
 
-For a complete list of the currently available environments click [here](bluesky_gym/envs/README.md)
+For a complete list of currently available environments, see [bluesky_gym/envs/README.md](bluesky_gym/envs/README.md).
+
+---
+
+## Changelog (7 July 2025)
+- **Installation Fix:** Added instructions to clone the `main_bluesky` branch of BlueSky-Gym for a compatible, local BlueSky-Simulator.  
+- **New Custom Environments:** Two enroute control scenarios:
+  - **CustomHorizontalCREnv:** Horizontal conflict resolution with built-in hallucination detection.
+  - **CustomVerticalCREnv:** Vertical conflict resolution focused on climb/descent conflicts.
+
+---
 
 ## Installation
-**Update 27 February 2025:** *There is currently a bug when pip installing BlueSky-Simulator, which causes the pip install to fail on most machines (see [issue](https://github.com/TUDelft-CNS-ATM/bluesky/issues/543)). For now, users can clone the repository linked in [this](https://github.com/TUDelft-CNS-ATM/bluesky-gym/tree/main_bluesky) branch and pip install the requirements.txt file to circumvent this problem. This branch contains a local, barebones, version of BlueSky-Simulator from which the required functionality is retrieved.*
 
-`pip install bluesky-gym`
+1. **Clone the repository and switch to the `main_bluesky` branch:**  
+   ```bash
+   git clone https://github.com/TUDelft-CNS-ATM/bluesky-gym.git
+   cd bluesky-gym
+   git checkout main_bluesky
+````
 
-Note that the pip package is `bluesky-gym`, for usage however, import as `bluesky_gym`.
+2. **Install required packages:**
+
+   ```bash
+   pip install -r requirements.txt
+   ```
+3. **Install BlueSky-Gym:**
+
+   ```bash
+   pip install .
+   ```
+
+> **Note:** The pip package name is `bluesky-gym`, but import it in code as `bluesky_gym`.
+
+---
 
 ## Usage
-Using the environments follows the standard API from Gymnasium, an example of which is given below:
 
-```python
-import gymnasium as gym
-import bluesky_gym
-bluesky_gym.register_envs()
+1. **Register environments:**
 
-env = gym.make('MergeEnv-v0', render_mode='human')
+   ```python
+   import gymnasium as gym
+   import bluesky_gym
+   bluesky_gym.register_envs()
+   ```
 
-obs, info = env.reset()
-done = truncated = False
-while not (done or truncated):
-    action = ... # Your agent code here
-    obs, reward, done, truncated, info = env.step(action)
-```
+2. **Standard example (MergeEnv):**
 
-Additionally you can directly use algorithms from standardized libraries such as [Stable-Baselines3](https://stable-baselines3.readthedocs.io/en/master/) or [RLlib](https://docs.ray.io/en/latest/rllib/index.html) to train a model:
+   ```python
+   env = gym.make('MergeEnv-v0', render_mode='human')
 
-```python
-import gymnasium as gym
-import bluesky_gym
-from stable_baselines3 import DDPG
-bluesky_gym.register_envs()
+   obs, info = env.reset()
+   done = truncated = False
+   while not (done or truncated):
+       action = ...  # Your agent's action
+       obs, reward, done, truncated, info = env.step(action)
+   ```
 
-env = gym.make('MergeEnv-v0', render_mode=None)
-model = DDPG("MultiInputPolicy",env)
-model.learn(total_timesteps=2e6)
-model.save()
-```
+3. **Custom enroute control environments:**
 
-## Contributing and Assistance
-If you would like to contribute to BlueSky-Gym or need assistance in setting up or creating your own environments, do not hesitate to open an issue or reach out to one of us via the BlueSky-Gym [Discord](https://discord.gg/s7CdxcSX).
-Additionally you can have a look at the [roadmap](https://github.com/TUDelft-CNS-ATM/bluesky-gym/issues/24) for inspiration on where you can contribute and to get an idea of the direction BlueSky-Gym is going.
+   * **Horizontal Conflict Resolution:**
 
+     ```python
+     env_horiz = gym.make('CustomHorizontalCREnv-v0')
+     ```
+   * **Vertical Conflict Resolution:**
+
+     ```python
+     env_vert = gym.make('CustomVerticalCREnv-v0')
+     ```
+
+4. **Training with Stable Baselines 3:**
+
+   ```python
+   from stable_baselines3 import SAC
+
+   model = SAC("MultiInputPolicy", env_horiz)
+   model.learn(total_timesteps=1e6)
+   model.save('sac_horizontal')
+   ```
+
+---
+
+## Contributing & Assistance
+
+Interested in contributing or need help? Join the BlueSky-Gym [Discord](https://discord.gg/s7CdxcSX) or open an issue.
+Check out our [roadmap](https://github.com/TUDelft-CNS-ATM/bluesky-gym/issues/24) for ideas and priorities.
+
+---
 
 ## Citing
 
-If you use BlueSky-Gym in your work, please cite it using:
+If you use BlueSky-Gym, please cite:
+
 ```bibtex
 @misc{bluesky-gym,
   author = {Groot, DJ and Leto, G and Vlaskin, A and Moec, A and Ellerbroek, J},
@@ -64,5 +112,7 @@ If you use BlueSky-Gym in your work, please cite it using:
 }
 ```
 
-List of publications & preprints using `BlueSky-Gym` (please open a pull request to add missing entries):
-*   _missing entry_
+*Add your publications using `BlueSky-Gym` by submitting a pull request!*
+
+```
+```

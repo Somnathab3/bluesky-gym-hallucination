@@ -31,7 +31,7 @@ INTRUSION_PENALTY = -50
 ALT_DIF_REWARD_SCALE = -5/3000
 CRASH_PENALTY = -100
 RWY_ALT_DIF_REWARD_SCALE = -50/3000
-HALLUCINATION_PENALTY = -1  # Additional penalty for potential hallucinations
+HALLUCINATION_PENALTY = -0.2   # Additional penalty for potential hallucinations
 
 NUM_INTRUDERS = 5
 INTRUSION_DISTANCE = 5  # NM

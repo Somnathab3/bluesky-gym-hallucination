@@ -1,20 +1,24 @@
 # bluesky_gym/envs/custom_vertical_cr_env.py
 """
-Custom Vertical Conflict Resolution Environment for ML Hallucination Research
+Enhanced Custom Vertical Conflict Resolution Environment for ML Hallucination Research
 
 This environment is designed for researching ML-based hallucination effects 
 on safety margins in air traffic control, specifically for vertical 
 conflict resolution scenarios during descent operations.
 
-Key features:
-- Enhanced observation space for hallucination detection
-- Configurable vertical safety margins for stress testing
-- Detailed logging for ML model behavior analysis
-- Support for boundary condition testing in vertical domain
+Key features for thesis research:
+- Parameterized training data envelope tracking
+- Ground-truth conflict metrics (FP/FN calculation)
+- Efficiency and intervention metrics
+- Monte-Carlo stress scenario generator
+- Severity-based hallucination penalties
+- Comprehensive CSV logging schema
 """
 
 import numpy as np
 import pygame
+from typing import Dict, Tuple, Optional, List, Any
+import time
 
 import bluesky as bs
 from bluesky_gym.envs.common.screen_dummy import ScreenDummy
@@ -31,7 +35,7 @@ INTRUSION_PENALTY = -50
 ALT_DIF_REWARD_SCALE = -5/3000
 CRASH_PENALTY = -100
 RWY_ALT_DIF_REWARD_SCALE = -50/3000
-HALLUCINATION_PENALTY = -0.2   # Additional penalty for potential hallucinations
+BASE_HALLUCINATION_PENALTY = -0.2
 
 NUM_INTRUDERS = 5
 INTRUSION_DISTANCE = 5  # NM
@@ -63,18 +67,31 @@ VERTICAL_SAFETY_MARGINS = {
     'critical': 200 * 0.3048        # 200 ft for stress testing
 }
 
+# Training data envelope bounds for vertical domain (derived from historical datasets)
+DEFAULT_TRAINING_BOUNDS = {
+    'altitude': (-2.0, 2.0),  # Normalized altitude (std deviations)
+    'vz': (-3.0, 3.0),        # Normalized vertical speed
+    'target_altitude': (-2.0, 2.0),  # Normalized target altitude
+    'runway_distance': (-2.0, 2.0),  # Normalized runway distance
+    'intruder_distance': (0.0, 1.0), # Normalized distance
+    'altitude_difference': (-2.0, 2.0),  # Normalized altitude difference
+    'z_difference_speed': (-10.0, 10.0),  # Vertical speed difference
+}
+
+# Monte-Carlo complexity parameters for vertical scenarios
+VERTICAL_COMPLEXITY_SCENARIOS = {
+    'nominal': {'dpsi_range': (45, 315), 'cpa_range': (3, 8), 'tlosh_range': (300, 1000), 'dH_factor': 1.0},
+    'moderate': {'dpsi_range': (30, 330), 'cpa_range': (1, 6), 'tlosh_range': (150, 800), 'dH_factor': 1.5},
+    'challenging': {'dpsi_range': (15, 345), 'cpa_range': (0.5, 4), 'tlosh_range': (80, 400), 'dH_factor': 2.0},
+    'extreme': {'dpsi_range': (0, 360), 'cpa_range': (0.1, 2), 'tlosh_range': (50, 200), 'dH_factor': 3.0}
+}
+
 class CustomVerticalCREnv(gym.Env):
     """
     Enhanced Vertical Conflict Resolution Environment for ML Hallucination Research
     
     This environment builds upon the original VerticalCREnv with additional features
     for studying ML hallucination effects and safety margin analysis in the vertical domain.
-    
-    Key additions:
-    - Configurable vertical safety margins for stress testing
-    - Enhanced observation space with confidence metrics
-    - Hallucination detection and logging
-    - Boundary condition testing capabilities for descent scenarios
     """
 
     metadata = {"render_modes": ["rgb_array", "human"], "render_fps": 120}
@@ -82,16 +99,22 @@ class CustomVerticalCREnv(gym.Env):
     def __init__(self, render_mode=None, vertical_safety_margin='standard', 
                  enable_hallucination_detection=True, 
                  boundary_test_mode=False,
-                 stress_test_mode=False):
+                 stress_test_mode=False,
+                 training_bounds: Optional[Dict[str, Tuple[float, float]]] = None,
+                 complexity_level: float = 0.0,
+                 episode_id: Optional[str] = None):
         """
-        Initialize the Custom Vertical CR Environment
+        Initialize the Enhanced Custom Vertical CR Environment
         
         Args:
             render_mode: Rendering mode ('rgb_array', 'human', or None)
-            vertical_safety_margin: Vertical safety margin level ('conservative', 'standard', 'aggressive', 'critical')
+            vertical_safety_margin: Vertical safety margin level
             enable_hallucination_detection: Enable hallucination detection features
             boundary_test_mode: Enable boundary condition testing
             stress_test_mode: Enable stress testing with extreme scenarios
+            training_bounds: Dictionary of training data boundaries for each observation feature
+            complexity_level: Complexity level for Monte-Carlo scenario generation (0.0-1.0)
+            episode_id: Unique identifier for this episode
         """
         self.window_width = 512
         self.window_height = 256
@@ -103,6 +126,9 @@ class CustomVerticalCREnv(gym.Env):
         self.enable_hallucination_detection = enable_hallucination_detection
         self.boundary_test_mode = boundary_test_mode
         self.stress_test_mode = stress_test_mode
+        self.training_bounds = training_bounds or DEFAULT_TRAINING_BOUNDS
+        self.complexity_level = max(0.0, min(1.0, complexity_level))  # Clamp to [0,1]
+        self.episode_id = episode_id or f"ep_{int(time.time() * 1000)}"
         
         # Enhanced observation space for hallucination research
         obs_dict = {
@@ -143,7 +169,7 @@ class CustomVerticalCREnv(gym.Env):
         bs.scr = ScreenDummy()
         bs.stack.stack('DT 1;FF')
 
-        # Logging and analysis variables
+        # Enhanced logging and analysis variables for thesis
         self.total_reward = 0
         self.total_intrusions = 0
         self.final_altitude = 0
@@ -152,12 +178,34 @@ class CustomVerticalCREnv(gym.Env):
         self.vertical_safety_violations = 0
         self.extreme_descent_events = 0
         
+        # Ground-truth conflict tracking for FP/FN calculation
+        self.ground_truth_conflicts = []
+        self.agent_alerts = []
+        self.false_positives = 0
+        self.false_negatives = 0
+        self.true_positives = 0
+        self.true_negatives = 0
+        
+        # Efficiency and intervention metrics
+        self.intervention_count = 0
+        self.cumulative_descent_deviation = 0.0
+        self.last_vertical_speed = 0.0
+        self.action_deadband = 0.1  # Minimum action magnitude to count as intervention
+        
+        # Envelope violation tracking
+        self.envelope_violation_score = 0.0
+        self.max_envelope_violation = 0.0
+        
         # Observation history for hallucination detection
         self.observation_history = []
         self.max_history_length = 10
         
         # Target altitude for current episode
         self.target_alt = None
+        
+        # Episode performance metrics
+        self.episode_start_time = time.time()
+        self.timestep_count = 0
         
         # Rendering
         self.window = None
@@ -168,7 +216,7 @@ class CustomVerticalCREnv(gym.Env):
         super().reset(seed=seed)
         bs.traf.reset()
 
-        # Reset logging variables
+        # Reset all logging variables
         self.total_reward = 0
         self.total_intrusions = 0
         self.final_altitude = 0
@@ -177,8 +225,29 @@ class CustomVerticalCREnv(gym.Env):
         self.vertical_safety_violations = 0
         self.extreme_descent_events = 0
         self.observation_history = []
+        
+        # Reset ground-truth conflict tracking
+        self.ground_truth_conflicts = []
+        self.agent_alerts = []
+        self.false_positives = 0
+        self.false_negatives = 0
+        self.true_positives = 0
+        self.true_negatives = 0
+        
+        # Reset efficiency metrics
+        self.intervention_count = 0
+        self.cumulative_descent_deviation = 0.0
+        self.last_vertical_speed = 0.0
+        
+        # Reset envelope tracking
+        self.envelope_violation_score = 0.0
+        self.max_envelope_violation = 0.0
+        
+        # Reset episode tracking
+        self.episode_start_time = time.time()
+        self.timestep_count = 0
 
-        # Set initial and target altitudes
+        # Set initial and target altitudes based on complexity and stress testing
         if self.stress_test_mode:
             # More challenging altitude scenarios for stress testing
             alt_init = np.random.randint(ALT_MAX - 500, ALT_MAX)
@@ -190,8 +259,9 @@ class CustomVerticalCREnv(gym.Env):
         # Create ownship
         bs.traf.cre('KL001', actype="A320", acalt=alt_init, acspd=AC_SPD)
         bs.traf.swvnav[0] = False
+        self.last_vertical_speed = bs.traf.vs[0]
 
-        # Generate conflicts
+        # Generate conflicts using complexity-based parameters
         self._generate_conflicts(acid='KL001')
 
         observation = self._get_obs()
@@ -204,6 +274,11 @@ class CustomVerticalCREnv(gym.Env):
     
     def step(self, action):
         """Execute one step in the environment"""
+        self.timestep_count += 1
+        
+        # Track intervention and descent deviation
+        self._track_intervention_metrics(action)
+        
         self._get_action(action)
 
         # Execute multiple simulation steps per action
@@ -214,9 +289,15 @@ class CustomVerticalCREnv(gym.Env):
                 observation = self._get_obs()
 
         observation = self._get_obs()
+        
+        # Calculate ground truth conflicts and agent alerts
+        self._calculate_ground_truth_conflicts()
+        agent_alerted = self._check_agent_alert(observation, action)
+        self._update_confusion_matrix(agent_alerted)
+        
         reward, terminated = self._get_reward()
         
-        # Detect potential hallucinations
+        # Detect potential hallucinations with severity-based penalties
         if self.enable_hallucination_detection:
             self._detect_hallucinations(observation, action)
 
@@ -236,31 +317,41 @@ class CustomVerticalCREnv(gym.Env):
         altitude = bs.traf.alt[target_idx]
         spd = bs.traf.gs[target_idx]
         
+        # Select scenario parameters based on complexity level
+        scenario_keys = list(VERTICAL_COMPLEXITY_SCENARIOS.keys())
+        scenario_index = min(int(self.complexity_level * len(scenario_keys)), len(scenario_keys) - 1)
+        scenario_name = scenario_keys[scenario_index]
+        scenario_params = VERTICAL_COMPLEXITY_SCENARIOS[scenario_name]
+        
         for i in range(NUM_INTRUDERS):
-            if self.boundary_test_mode:
-                # Generate more challenging boundary scenarios
-                dpsi = np.random.choice([45, 90, 135, 180, 225, 270, 315])
-                cpa = np.random.uniform(0.5, INTRUSION_DISTANCE * 1.2)
-                tlosh = np.random.randint(50, 150)  # Shorter time to conflict
-            else:
-                dpsi = np.random.randint(45, 315)
-                cpa = np.random.randint(0, INTRUSION_DISTANCE)
-                tlosh = np.random.randint(100, int((DEFAULT_RWY_DIS * 0.9) * 1000 / spd))
+            # Use complexity-based parameter ranges
+            dpsi_min, dpsi_max = scenario_params['dpsi_range']
+            cpa_min, cpa_max = scenario_params['cpa_range']
+            tlosh_min, tlosh_max = scenario_params['tlosh_range']
+            dH_factor = scenario_params['dH_factor']
             
-            # Enhanced altitude conflict generation
+            dpsi = np.random.uniform(dpsi_min, dpsi_max)
+            cpa = np.random.uniform(cpa_min, cpa_max)
+            tlosh = np.random.uniform(tlosh_min, tlosh_max)
+            
+            # Enhanced altitude conflict generation with complexity scaling
             average_tod = (DEFAULT_RWY_DIS * 1000 / spd) - 2 * self.target_alt / ACTION_2_MS
             
-            if self.stress_test_mode:
+            if self.stress_test_mode or self.complexity_level > 0.7:
                 # Create more challenging vertical conflicts
                 if tlosh > average_tod:
-                    dH = np.random.randint(int(-altitude + 200), int((self.target_alt - altitude) + 50))
+                    dH_range = int((self.target_alt - altitude) * dH_factor + 200)
+                    dH = np.random.randint(int(-altitude + 200), dH_range)
                 else:
-                    dH = np.random.randint(int((self.target_alt - altitude) - 200), int((self.target_alt - altitude) + 200))
+                    dH_range = int(200 * dH_factor)
+                    dH = np.random.randint(int((self.target_alt - altitude) - dH_range), 
+                                         int((self.target_alt - altitude) + dH_range))
             else:
                 if tlosh > average_tod:
                     dH = np.random.randint(int(-altitude + 500), int((self.target_alt - altitude) + 100))
                 else:
-                    dH = np.random.randint(int((self.target_alt - altitude) - 500), int((self.target_alt - altitude) + 500))
+                    dH = np.random.randint(int((self.target_alt - altitude) - 500), 
+                                         int((self.target_alt - altitude) + 500))
             
             tlosv = 100000000000.
 
@@ -414,21 +505,36 @@ class CustomVerticalCREnv(gym.Env):
         return 1.0
 
     def _calculate_boundary_proximity(self, obs):
-        """Calculate how close observations are to training data boundaries for vertical domain"""
-        # Check altitude boundaries
-        normalized_alt = obs["altitude"][0]
-        alt_boundary = max(0.0, abs(normalized_alt) - 1.5)  # Beyond 1.5 std deviations
+        """Calculate envelope violation score based on training data boundaries for vertical domain"""
+        violation_scores = []
         
-        # Check vertical speed boundaries
-        normalized_vz = obs["vz"][0]
-        vz_boundary = max(0.0, abs(normalized_vz) - 2.0)    # Beyond 2 std deviations
+        for feature_name, bounds in self.training_bounds.items():
+            if feature_name in obs:
+                feature_values = obs[feature_name]
+                if isinstance(feature_values, np.ndarray):
+                    feature_values = feature_values.flatten()
+                else:
+                    feature_values = [feature_values]
+                
+                min_bound, max_bound = bounds
+                range_size = max_bound - min_bound if max_bound != min_bound else 1.0
+                
+                for value in feature_values:
+                    if value < min_bound:
+                        violation = (min_bound - value) / range_size
+                        violation_scores.append(violation)
+                    elif value > max_bound:
+                        violation = (value - max_bound) / range_size
+                        violation_scores.append(violation)
+                    else:
+                        violation_scores.append(0.0)
         
-        # Check runway distance boundaries
-        normalized_rwy_dist = obs["runway_distance"][0]
-        rwy_boundary = max(0.0, abs(normalized_rwy_dist) - 2.0)
+        if violation_scores:
+            self.envelope_violation_score = np.mean(violation_scores)
+            self.max_envelope_violation = max(self.max_envelope_violation, self.envelope_violation_score)
+            return min(1.0, self.envelope_violation_score)
         
-        boundary_proximity = min(1.0, (alt_boundary + vz_boundary + rwy_boundary) / 3.0)
-        return boundary_proximity
+        return 0.0
 
     def _calculate_anomaly_score(self, obs):
         """Calculate anomaly score for potential hallucination detection in vertical domain"""
@@ -479,65 +585,162 @@ class CustomVerticalCREnv(gym.Env):
         
         return min(1.0, ground_risk + ceiling_risk)
 
+    def _calculate_ground_truth_conflicts(self):
+        """Calculate ground truth conflicts for FP/FN analysis in vertical domain"""
+        ac_idx = bs.traf.id2idx('KL001')
+        conflict_present = False
+        
+        # Check if any intruder violates vertical separation within lookahead window
+        lookahead_time = 60  # seconds
+        
+        for i in range(NUM_INTRUDERS):
+            int_idx = i + 1
+            _, horizontal_distance = bs.tools.geo.kwikqdrdist(
+                bs.traf.lat[ac_idx], bs.traf.lon[ac_idx], 
+                bs.traf.lat[int_idx], bs.traf.lon[int_idx]
+            )
+            vertical_distance = abs(bs.traf.alt[ac_idx] - bs.traf.alt[int_idx])
+            
+            # Check for potential vertical conflicts
+            if (horizontal_distance < INTRUSION_DISTANCE and 
+                vertical_distance < self.vertical_margin * 1.5):  # Expanded margin for prediction
+                conflict_present = True
+                break
+        
+        self.ground_truth_conflicts.append(conflict_present)
+
+    def _check_agent_alert(self, observation, action):
+        """Check if agent is alerting/intervening based on action magnitude"""
+        action_magnitude = abs(action[0]) if hasattr(action, '__len__') else abs(action)
+        agent_alerted = action_magnitude > self.action_deadband
+        self.agent_alerts.append(agent_alerted)
+        return agent_alerted
+
+    def _update_confusion_matrix(self, agent_alerted):
+        """Update confusion matrix for FP/FN calculation"""
+        if len(self.ground_truth_conflicts) > 0:
+            conflict_present = self.ground_truth_conflicts[-1]
+            
+            if conflict_present and agent_alerted:
+                self.true_positives += 1
+            elif conflict_present and not agent_alerted:
+                self.false_negatives += 1
+            elif not conflict_present and agent_alerted:
+                self.false_positives += 1
+            else:
+                self.true_negatives += 1
+
+    def _track_intervention_metrics(self, action):
+        """Track efficiency and intervention metrics for vertical domain"""
+        action_value = action[0] if hasattr(action, '__len__') else action
+        
+        # Count interventions
+        if abs(action_value) > self.action_deadband:
+            self.intervention_count += 1
+        
+        # Track descent rate deviation
+        current_vz = bs.traf.vs[0] if len(bs.traf.vs) > 0 else self.last_vertical_speed
+        vz_change = abs(current_vz - self.last_vertical_speed)
+        self.cumulative_descent_deviation += vz_change
+        self.last_vertical_speed = current_vz
+
     def _detect_hallucinations(self, observation, action):
-        """Detect potential ML hallucinations in vertical domain"""
+        """Detect potential ML hallucinations in vertical domain with severity-based penalties"""
         if not self.enable_hallucination_detection:
             return
         
         hallucination_detected = False
+        severity_score = 0.0
         
         # 1. Inconsistent observations
-        if observation.get("observation_confidence", [1.0])[0] < 0.3:
+        confidence = observation.get("observation_confidence", [1.0])[0]
+        if confidence < 0.3:
             hallucination_detected = True
+            severity_score += 1.0 - confidence
             
         # 2. Boundary violations
-        if observation.get("boundary_proximity", [0.0])[0] > 0.7:
+        boundary_proximity = observation.get("boundary_proximity", [0.0])[0]
+        if boundary_proximity > 0.7:
             self.boundary_violations += 1
             hallucination_detected = True
+            severity_score += boundary_proximity
             
         # 3. High anomaly scores
-        if observation.get("anomaly_score", [0.0])[0] > 0.8:
+        anomaly_score = observation.get("anomaly_score", [0.0])[0]
+        if anomaly_score > 0.8:
             hallucination_detected = True
+            severity_score += anomaly_score
         
         # 4. Vertical safety margin violations
         vertical_safety_ratio = observation.get("vertical_safety_ratio", [1.0])[0]
         if vertical_safety_ratio < 0.3:
             self.vertical_safety_violations += 1
             hallucination_detected = True
+            severity_score += 1.0 - vertical_safety_ratio
         
         # 5. Descent rate anomalies
-        if observation.get("descent_rate_anomaly", [0.0])[0] > 0.5:
+        descent_rate_anomaly = observation.get("descent_rate_anomaly", [0.0])[0]
+        if descent_rate_anomaly > 0.5:
             hallucination_detected = True
+            severity_score += descent_rate_anomaly
             
         # 6. Altitude boundary risks
-        if observation.get("altitude_boundary_risk", [0.0])[0] > 0.8:
+        altitude_boundary_risk = observation.get("altitude_boundary_risk", [0.0])[0]
+        if altitude_boundary_risk > 0.8:
             hallucination_detected = True
+            severity_score += altitude_boundary_risk
         
         if hallucination_detected:
             self.hallucination_events.append({
-                'step': len(self.observation_history),
-                'confidence': observation.get("observation_confidence", [0.0])[0],
-                'boundary_proximity': observation.get("boundary_proximity", [0.0])[0],
-                'anomaly_score': observation.get("anomaly_score", [0.0])[0],
+                'step': self.timestep_count,
+                'confidence': confidence,
+                'boundary_proximity': boundary_proximity,
+                'anomaly_score': anomaly_score,
                 'vertical_safety_ratio': vertical_safety_ratio,
-                'descent_rate_anomaly': observation.get("descent_rate_anomaly", [0.0])[0],
-                'altitude_boundary_risk': observation.get("altitude_boundary_risk", [0.0])[0],
+                'descent_rate_anomaly': descent_rate_anomaly,
+                'altitude_boundary_risk': altitude_boundary_risk,
+                'severity_score': severity_score,
                 'action': action[0] if hasattr(action, '__len__') else action,
                 'altitude': self.altitude,
-                'vertical_speed': self.vz
+                'vertical_speed': self.vz,
+                'episode_id': self.episode_id
             })
 
     def _get_info(self):
-        """Get environment info including hallucination metrics"""
+        """Get comprehensive environment info including all thesis metrics"""
         base_info = {
+            # Basic environment info
+            'episode_id': self.episode_id,
+            'timestep': self.timestep_count,
+            'episode_duration': time.time() - self.episode_start_time,
             "total_reward": self.total_reward,
             "total_intrusions": self.total_intrusions,
             "final_altitude": self.final_altitude,
+            
+            # Safety margin configuration
             "vertical_safety_margin_level": self.vertical_safety_margin_level,
             "vertical_margin": self.vertical_margin,
             "target_altitude": self.target_alt,
             "current_altitude": self.altitude,
-            "vertical_speed": self.vz
+            "vertical_speed": self.vz,
+            "complexity_level": self.complexity_level,
+            
+            # Ground-truth conflict metrics (FP/FN)
+            'conflict_present': self.ground_truth_conflicts[-1] if self.ground_truth_conflicts else False,
+            'alert_triggered': self.agent_alerts[-1] if self.agent_alerts else False,
+            'false_positives': self.false_positives,
+            'false_negatives': self.false_negatives,
+            'true_positives': self.true_positives,
+            'true_negatives': self.true_negatives,
+            
+            # Efficiency and intervention metrics
+            'n_interventions': self.intervention_count,
+            'cumulative_descent_deviation': self.cumulative_descent_deviation,
+            'intervention_rate': self.intervention_count / max(1, self.timestep_count),
+            
+            # Training envelope and boundary metrics
+            'envelope_violation_score': self.envelope_violation_score,
+            'max_envelope_violation': self.max_envelope_violation,
         }
         
         if self.enable_hallucination_detection:
@@ -546,13 +749,17 @@ class CustomVerticalCREnv(gym.Env):
                 'boundary_violations': self.boundary_violations,
                 'vertical_safety_violations': self.vertical_safety_violations,
                 'extreme_descent_events': self.extreme_descent_events,
-                'hallucination_rate': len(self.hallucination_events) / max(1, len(self.observation_history))
+                'hallucination_rate': len(self.hallucination_events) / max(1, self.timestep_count),
+                
+                # Calculate total severity-weighted hallucination penalty
+                'total_hallucination_severity': sum(event['severity_score'] for event in self.hallucination_events),
+                'avg_hallucination_severity': np.mean([event['severity_score'] for event in self.hallucination_events]) if self.hallucination_events else 0.0,
             })
         
         return base_info
     
     def _get_reward(self):
-        """Calculate reward with hallucination penalties"""
+        """Calculate reward with severity-based hallucination penalties"""
         int_penalty = self._check_intrusion()
         done = 0
         
@@ -569,12 +776,17 @@ class CustomVerticalCREnv(gym.Env):
         else:
             alt_penalty = 0
             
-        # Add hallucination penalty
+        # Add severity-based hallucination penalty
         hallucination_reward = 0
         if self.enable_hallucination_detection and len(self.hallucination_events) > 0:
-            recent_hallucinations = sum(1 for event in self.hallucination_events 
-                                      if event['step'] >= len(self.observation_history) - 1)
-            hallucination_reward = recent_hallucinations * HALLUCINATION_PENALTY
+            # Get recent hallucination events from this timestep
+            recent_events = [event for event in self.hallucination_events 
+                           if event['step'] >= self.timestep_count]
+            
+            if recent_events:
+                # Apply penalty proportional to severity
+                total_severity = sum(event['severity_score'] for event in recent_events)
+                hallucination_reward = BASE_HALLUCINATION_PENALTY * total_severity
             
         reward = alt_penalty + int_penalty + hallucination_reward
         self.total_reward += reward
@@ -616,7 +828,7 @@ class CustomVerticalCREnv(gym.Env):
             bs.traf.selvs[0] = action_ms
 
     def _render_frame(self):
-        """Render the environment visualization with hallucination indicators"""
+        """Render the environment visualization with comprehensive hallucination indicators"""
         if self.window is None and self.render_mode == "human":
             pygame.init()
             pygame.display.init()
@@ -663,7 +875,7 @@ class CustomVerticalCREnv(gym.Env):
         # Color ownship based on hallucination risk
         ownship_color = (0, 0, 0)  # Default black
         if self.enable_hallucination_detection and len(self.hallucination_events) > 0:
-            recent_events = [e for e in self.hallucination_events if e['step'] >= len(self.observation_history) - 3]
+            recent_events = [e for e in self.hallucination_events if e['step'] >= self.timestep_count - 3]
             if recent_events:
                 ownship_color = (255, 165, 0)  # Orange for hallucination warning
 
@@ -729,16 +941,15 @@ class CustomVerticalCREnv(gym.Env):
                 width=1
             )
 
-        # Draw hallucination and safety indicators
+        # Draw comprehensive hallucination and safety indicators
         if self.enable_hallucination_detection:
             # Hallucination indicator
             if len(self.hallucination_events) > 0:
-                recent_events = [e for e in self.hallucination_events if e['step'] >= len(self.observation_history) - 5]
+                recent_events = [e for e in self.hallucination_events if e['step'] >= self.timestep_count - 5]
                 if recent_events:
                     pygame.draw.circle(canvas, (255, 255, 0),
                         (50, 50), radius=20, width=3
                     )
-                    # Add text "HALL" in the circle
                     font = pygame.font.Font(None, 24)
                     text = font.render("HALL", True, (255, 255, 0))
                     canvas.blit(text, (35, 42))
@@ -760,26 +971,54 @@ class CustomVerticalCREnv(gym.Env):
                 font = pygame.font.Font(None, 24)
                 text = font.render("BOUN", True, (255, 165, 0))
                 canvas.blit(text, (135, 42))
+                
+            # Extreme descent indicator
+            if self.extreme_descent_events > 0:
+                pygame.draw.circle(canvas, (128, 0, 128),
+                    (200, 50), radius=20, width=3
+                )
+                font = pygame.font.Font(None, 24)
+                text = font.render("DESC", True, (128, 0, 128))
+                canvas.blit(text, (185, 42))
 
-        # Display current statistics
+        # Display comprehensive statistics
         if self.enable_hallucination_detection:
-            font = pygame.font.Font(None, 24)
+            font = pygame.font.Font(None, 18)
             
-            # Hallucination count
-            hall_text = font.render(f"Hallucinations: {len(self.hallucination_events)}", True, (255, 255, 255))
-            canvas.blit(hall_text, (10, self.window_height - 40))
+            # Row 1: Basic episode info
+            stats_text = [
+                f"Episode: {self.episode_id[-8:]}",  # Show last 8 chars
+                f"Step: {self.timestep_count}",
+                f"Complexity: {self.complexity_level:.2f}"
+            ]
             
-            # Safety violations
-            safe_text = font.render(f"Safety Violations: {self.vertical_safety_violations}", True, (255, 255, 255))
-            canvas.blit(safe_text, (10, self.window_height - 20))
+            # Row 2: Hallucination metrics
+            stats_text.extend([
+                f"Hallucinations: {len(self.hallucination_events)}",
+                f"Boundary Viol: {self.boundary_violations}",
+                f"Envelope: {self.envelope_violation_score:.3f}"
+            ])
             
-            # Current altitude and vertical speed
-            alt_text = font.render(f"Alt: {int(self.altitude)}m VS: {self.vz:.1f}m/s", True, (255, 255, 255))
-            canvas.blit(alt_text, (250, self.window_height - 40))
+            # Row 3: Conflict detection metrics
+            stats_text.extend([
+                f"FP: {self.false_positives} FN: {self.false_negatives}",
+                f"TP: {self.true_positives} TN: {self.true_negatives}",
+                f"Interventions: {self.intervention_count}"
+            ])
             
-            # Safety margin level
-            margin_text = font.render(f"Safety: {self.vertical_safety_margin_level}", True, (255, 255, 255))
-            canvas.blit(margin_text, (250, self.window_height - 20))
+            # Row 4: Altitude and descent metrics
+            stats_text.extend([
+                f"Alt: {int(self.altitude)}m VS: {self.vz:.1f}m/s",
+                f"Target: {int(self.target_alt)}m",
+                f"Safety: {self.vertical_safety_margin_level}"
+            ])
+            
+            # Display stats in a compact grid
+            for i, text in enumerate(stats_text):
+                rendered_text = font.render(text, True, (255, 255, 255))
+                y_pos = self.window_height - 80 + (i % 4) * 18
+                x_pos = 5 + (i // 4) * 170
+                canvas.blit(rendered_text, (x_pos, y_pos))
 
         self.window.blit(canvas, canvas.get_rect())
         pygame.display.update()

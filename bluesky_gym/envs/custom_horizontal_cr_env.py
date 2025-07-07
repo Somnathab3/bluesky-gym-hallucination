@@ -28,7 +28,7 @@ DISTANCE_MARGIN = 5  # km
 REACH_REWARD = 1
 DRIFT_PENALTY = -0.1
 INTRUSION_PENALTY = -1
-HALLUCINATION_PENALTY = -1  # Additional penalty for potential hallucinations
+HALLUCINATION_PENALTY = -0.2  # Additional penalty for potential hallucinations
 
 NUM_INTRUDERS = 5
 NUM_WAYPOINTS = 1

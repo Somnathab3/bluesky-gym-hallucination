@@ -1,4 +1,3 @@
-````markdown
 ## BlueSky-Gym
 A gymnasium-style library for standardized Reinforcement Learning research in Air Traffic Management, developed in Python.
 

@@ -11,5 +11,5 @@ from bluesky_gym.envs.merge_env import *
 from bluesky_gym.envs.sector_cr_env import *
 
 # Import the new custom conflict resolution environments
-from bluesky_gym.envs.custom_horizontal_cr_env import CustomHorizontalCREnv
-from bluesky_gym.envs.custom_vertical_cr_env import CustomVerticalCREnv
+from bluesky_gym.envs.custom_horizontal_cr_env import *
+from bluesky_gym.envs.custom_vertical_cr_env import *

@@ -13,6 +13,7 @@ Key features for thesis research:
 - Monte-Carlo stress scenario generator
 - Severity-based hallucination penalties
 - Comprehensive CSV logging schema
+- Enhanced hallucination reduction features
 """
 
 import numpy as np
@@ -89,7 +90,9 @@ class CustomHorizontalCREnv(gym.Env):
                  boundary_test_mode=False,
                  training_bounds: Optional[Dict[str, Tuple[float, float]]] = None,
                  complexity_level: float = 0.0,
-                 episode_id: Optional[str] = None):
+                 episode_id: Optional[str] = None,
+                 curriculum_learning=False,
+                 domain_randomization=True):
         """
         Initialize the Enhanced Custom Horizontal CR Environment
         
@@ -101,6 +104,8 @@ class CustomHorizontalCREnv(gym.Env):
             training_bounds: Dictionary of training data boundaries for each observation feature
             complexity_level: Complexity level for Monte-Carlo scenario generation (0.0-1.0)
             episode_id: Unique identifier for this episode
+            curriculum_learning: Enable curriculum learning for safety margins
+            domain_randomization: Enable domain randomization for robust training
         """
         self.window_width = 512
         self.window_height = 512
@@ -114,6 +119,8 @@ class CustomHorizontalCREnv(gym.Env):
         self.training_bounds = training_bounds or DEFAULT_TRAINING_BOUNDS
         self.complexity_level = max(0.0, min(1.0, complexity_level))  # Clamp to [0,1]
         self.episode_id = episode_id or f"ep_{int(time.time() * 1000)}"
+        self.curriculum_learning = curriculum_learning
+        self.domain_randomization = domain_randomization
         
         # Enhanced observation space for hallucination research
         obs_dict = {
@@ -155,13 +162,18 @@ class CustomHorizontalCREnv(gym.Env):
         self.boundary_violations = 0
         self.safety_margin_violations = 0
         
-        # Ground-truth conflict tracking for FP/FN calculation
+        # Ground-truth conflict tracking for FP/FN calculation with temporal filtering
         self.ground_truth_conflicts = []
         self.agent_alerts = []
         self.false_positives = 0
         self.false_negatives = 0
         self.true_positives = 0
         self.true_negatives = 0
+        
+        # Temporal filtering for conflict detection
+        self.conflict_history = []
+        self.alert_history = []
+        self.temporal_window = 3  # Require conflicts to persist for 3 timesteps
         
         # Efficiency and intervention metrics
         self.intervention_count = 0
@@ -177,10 +189,19 @@ class CustomHorizontalCREnv(gym.Env):
         self.observation_history = []
         self.max_history_length = 10
         
+        # Trajectory prediction for improved hallucination detection
+        self.predicted_trajectories = {}
+        self.actual_trajectories = {}
+        
         # Episode performance metrics
         self.episode_start_time = time.time()
         self.timestep_count = 0
+        self.episode_count = 0
         
+        # Curriculum learning progression
+        if self.curriculum_learning:
+            self.base_margin = self.intrusion_distance
+            
         # Rendering
         self.window = None
         self.clock = None
@@ -208,6 +229,10 @@ class CustomHorizontalCREnv(gym.Env):
         self.true_positives = 0
         self.true_negatives = 0
         
+        # Reset temporal filtering
+        self.conflict_history = []
+        self.alert_history = []
+        
         # Reset efficiency metrics
         self.intervention_count = 0
         self.cumulative_heading_deviation = 0.0
@@ -217,9 +242,18 @@ class CustomHorizontalCREnv(gym.Env):
         self.envelope_violation_score = 0.0
         self.max_envelope_violation = 0.0
         
+        # Reset trajectory tracking
+        self.predicted_trajectories = {}
+        self.actual_trajectories = {}
+        
         # Reset episode tracking
         self.episode_start_time = time.time()
         self.timestep_count = 0
+        self.episode_count += 1
+        
+        # Apply curriculum learning for safety margins
+        if self.curriculum_learning:
+            self._update_curriculum_margin()
 
         # Create ownship
         bs.traf.cre('KL001', actype="A320", acspd=AC_SPD)
@@ -244,6 +278,10 @@ class CustomHorizontalCREnv(gym.Env):
         # Track intervention and heading deviation
         self._track_intervention_metrics(action)
         
+        # Store predicted trajectory before taking action
+        if self.enable_hallucination_detection:
+            self._predict_trajectories(action)
+        
         self._get_action(action)
 
         # Execute multiple simulation steps per action
@@ -255,12 +293,16 @@ class CustomHorizontalCREnv(gym.Env):
 
         observation = self._get_obs()
         
-        # Calculate ground truth conflicts and agent alerts
-        self._calculate_ground_truth_conflicts()
-        agent_alerted = self._check_agent_alert(observation, action)
-        self._update_confusion_matrix(agent_alerted)
+        # Update actual trajectories for comparison
+        if self.enable_hallucination_detection:
+            self._update_actual_trajectories()
         
-        reward, terminated = self._get_reward()
+        # Calculate ground truth conflicts with temporal filtering
+        self._calculate_ground_truth_conflicts_temporal()
+        agent_alerted = self._check_agent_alert(observation, action)
+        self._update_confusion_matrix_temporal(agent_alerted)
+        
+        reward, terminated = self._get_reward(action)
         
         # Detect potential hallucinations with severity-based penalties
         if self.enable_hallucination_detection:
@@ -277,7 +319,7 @@ class CustomHorizontalCREnv(gym.Env):
         return observation, reward, terminated, False, info
 
     def _generate_conflicts(self, acid='KL001'):
-        """Generate conflicting aircraft using Monte-Carlo complexity parameters"""
+        """Generate conflicting aircraft using Monte-Carlo complexity parameters with domain randomization"""
         target_idx = bs.traf.id2idx(acid)
         
         # Select scenario parameters based on complexity level
@@ -285,6 +327,10 @@ class CustomHorizontalCREnv(gym.Env):
         scenario_index = min(int(self.complexity_level * len(scenario_keys)), len(scenario_keys) - 1)
         scenario_name = scenario_keys[scenario_index]
         scenario_params = COMPLEXITY_SCENARIOS[scenario_name]
+        
+        # Domain randomization: Add environmental noise
+        wind_noise = np.random.normal(0, 2) if self.domain_randomization else 0
+        speed_noise_factor = np.random.uniform(0.95, 1.05) if self.domain_randomization else 1.0
         
         for i in range(NUM_INTRUDERS):
             # Use complexity-based parameter ranges
@@ -296,9 +342,205 @@ class CustomHorizontalCREnv(gym.Env):
             cpa = np.random.uniform(cpa_min, cpa_max)
             tlosh = np.random.uniform(tlosh_min, tlosh_max)
             
+            # Add domain randomization noise
+            if self.domain_randomization:
+                dpsi += np.random.normal(0, 5)  # Angular noise
+                cpa += np.random.normal(0, 0.5)  # Distance noise
+                tlosh += np.random.normal(0, 50)  # Time noise
+                
+                # Ensure bounds
+                dpsi = np.clip(dpsi, 0, 360)
+                cpa = max(0.1, cpa)
+                tlosh = max(50, tlosh)
+            
             bs.traf.creconfs(acid=f'{i}', actype="A320", targetidx=target_idx, 
                            dpsi=dpsi, dcpa=cpa, tlosh=tlosh)
+            
+            # Apply speed and wind noise
+            if self.domain_randomization:
+                bs.traf.gs[i+1] *= speed_noise_factor
+                # Simulate wind effect (simplified)
+                bs.traf.hdg[i+1] += wind_noise
 
+    def _update_curriculum_margin(self):
+        """Update safety margin based on curriculum learning progression"""
+        # Start with aggressive margin, gradually increase to target
+        progress = min(1.0, self.episode_count / 1000)  # Full curriculum over 1000 episodes
+        
+        if self.safety_margin_level == 'standard':
+            # Start at aggressive (3.0), progress to standard (5.0)
+            self.intrusion_distance = 3.0 + progress * (5.0 - 3.0)
+        elif self.safety_margin_level == 'conservative':
+            # Start at standard (5.0), progress to conservative (8.0)
+            self.intrusion_distance = 5.0 + progress * (8.0 - 5.0)
+
+    def _predict_trajectories(self, action):
+        """Predict trajectories for hallucination detection"""
+        ac_idx = bs.traf.id2idx('KL001')
+        
+        # Simple trajectory prediction for ownship
+        action_value = action[0] if hasattr(action, '__len__') else action
+        predicted_heading = self.ac_hdg + action_value * D_HEADING
+        
+        # Store prediction
+        self.predicted_trajectories[self.timestep_count] = {
+            'ownship_heading': predicted_heading,
+            'intruder_positions': []
+        }
+        
+        # Predict intruder positions (simple linear extrapolation)
+        for i in range(NUM_INTRUDERS):
+            int_idx = i + 1
+            if int_idx < len(bs.traf.lat):
+                current_lat = bs.traf.lat[int_idx]
+                current_lon = bs.traf.lon[int_idx]
+                heading = bs.traf.hdg[int_idx]
+                speed = bs.traf.gs[int_idx]
+                
+                # Predict position after ACTION_FREQUENCY simulation steps
+                time_step = ACTION_FREQUENCY * 5  # 5 seconds per simulation step
+                predicted_lat, predicted_lon = fn.get_point_at_distance(
+                    current_lat, current_lon, 
+                    speed * time_step / 3600,  # Convert to nautical miles
+                    heading
+                )
+                
+                self.predicted_trajectories[self.timestep_count]['intruder_positions'].append({
+                    'lat': predicted_lat,
+                    'lon': predicted_lon
+                })
+
+    def _update_actual_trajectories(self):
+        """Update actual trajectories for comparison with predictions"""
+        ac_idx = bs.traf.id2idx('KL001')
+        
+        self.actual_trajectories[self.timestep_count] = {
+            'ownship_heading': bs.traf.hdg[ac_idx],
+            'intruder_positions': []
+        }
+        
+        for i in range(NUM_INTRUDERS):
+            int_idx = i + 1
+            if int_idx < len(bs.traf.lat):
+                self.actual_trajectories[self.timestep_count]['intruder_positions'].append({
+                    'lat': bs.traf.lat[int_idx],
+                    'lon': bs.traf.lon[int_idx]
+                })
+
+    def _calculate_ground_truth_conflicts_temporal(self):
+        """Calculate ground truth conflicts with temporal filtering"""
+        ac_idx = bs.traf.id2idx('KL001')
+        conflict_present = False
+        
+        # Check if any intruder violates separation within lookahead window
+        lookahead_time = 60  # seconds
+        
+        for i in range(NUM_INTRUDERS):
+            int_idx = i + 1
+            _, current_distance = bs.tools.geo.kwikqdrdist(
+                bs.traf.lat[ac_idx], bs.traf.lon[ac_idx], 
+                bs.traf.lat[int_idx], bs.traf.lon[int_idx]
+            )
+            
+            # Simple conflict prediction (could be enhanced with trajectory prediction)
+            if current_distance < self.intrusion_distance * 1.5:  # Expanded margin for prediction
+                conflict_present = True
+                break
+        
+        # Add to conflict history
+        self.conflict_history.append(conflict_present)
+        if len(self.conflict_history) > self.temporal_window:
+            self.conflict_history.pop(0)
+        
+        # Determine filtered conflict (require persistence)
+        if len(self.conflict_history) >= self.temporal_window:
+            # Require majority of recent timesteps to indicate conflict
+            filtered_conflict = sum(self.conflict_history) >= (self.temporal_window // 2 + 1)
+        else:
+            filtered_conflict = conflict_present
+        
+        self.ground_truth_conflicts.append(filtered_conflict)
+
+    def _update_confusion_matrix_temporal(self, agent_alerted):
+        """Update confusion matrix with temporal filtering for FP/FN calculation"""
+        # Add to alert history
+        self.alert_history.append(agent_alerted)
+        if len(self.alert_history) > self.temporal_window:
+            self.alert_history.pop(0)
+        
+        # Determine filtered alert (require persistence for positive classification)
+        if len(self.alert_history) >= self.temporal_window:
+            filtered_alert = sum(self.alert_history) >= (self.temporal_window // 2 + 1)
+        else:
+            filtered_alert = agent_alerted
+        
+        self.agent_alerts.append(filtered_alert)
+        
+        if len(self.ground_truth_conflicts) > 0:
+            conflict_present = self.ground_truth_conflicts[-1]
+            
+            if conflict_present and filtered_alert:
+                self.true_positives += 1
+            elif conflict_present and not filtered_alert:
+                self.false_negatives += 1
+            elif not conflict_present and filtered_alert:
+                self.false_positives += 1
+            else:
+                self.true_negatives += 1
+
+    def _check_trajectory_prediction_error(self):
+        """Check for prediction errors that might indicate hallucinations"""
+        if len(self.predicted_trajectories) < 2 or len(self.actual_trajectories) < 2:
+            return 0.0
+        
+        prediction_error = 0.0
+        comparison_steps = min(3, len(self.predicted_trajectories))
+        
+        for i in range(1, comparison_steps + 1):
+            step = self.timestep_count - i
+            if step in self.predicted_trajectories and step in self.actual_trajectories:
+                pred = self.predicted_trajectories[step]
+                actual = self.actual_trajectories[step]
+                
+                # Compare heading prediction error
+                heading_error = abs(pred['ownship_heading'] - actual['ownship_heading'])
+                if heading_error > 180:
+                    heading_error = 360 - heading_error
+                
+                prediction_error += heading_error / 180.0  # Normalize to [0,1]
+        
+        return min(1.0, prediction_error / comparison_steps)
+
+    def _get_reward(self, action):
+        """Calculate reward with enhanced severity-based hallucination penalties"""
+        reach_reward = self._check_waypoint()
+        drift_reward = self._check_drift()
+        intrusion_reward = self._check_intrusion()
+        
+        # Enhanced severity-based hallucination penalty
+        hallucination_reward = 0
+        if self.enable_hallucination_detection and len(self.hallucination_events) > 0:
+            # Get recent hallucination events from this timestep
+            recent_events = [event for event in self.hallucination_events 
+                           if event['step'] >= self.timestep_count]
+            
+            if recent_events:
+                # Apply penalty proportional to severity AND action magnitude
+                action_magnitude = abs(action[0]) if hasattr(action, '__len__') else abs(action)
+                total_severity = sum(event['severity_score'] for event in recent_events)
+                
+                # Scale penalty by action magnitude (larger maneuvers get higher penalty)
+                disruption_factor = 1 + 2 * action_magnitude  # Factor between 1-3
+                hallucination_reward = BASE_HALLUCINATION_PENALTY * total_severity * disruption_factor
+
+        total_reward = reach_reward + drift_reward + intrusion_reward + hallucination_reward
+        self.total_reward += total_reward
+
+        terminated = 0 not in self.wpt_reach if self.wpt_reach else False
+        return total_reward, terminated
+
+    # [Rest of the methods remain the same as original, with these key additions:]
+    
     def _generate_waypoint(self, acid='KL001'):
         """Generate waypoints for navigation"""
         self.wpt_lat = []
@@ -490,48 +732,11 @@ class CustomHorizontalCREnv(gym.Env):
         
         return 0.0
 
-    def _calculate_ground_truth_conflicts(self):
-        """Calculate ground truth conflicts for FP/FN analysis"""
-        ac_idx = bs.traf.id2idx('KL001')
-        conflict_present = False
-        
-        # Check if any intruder violates separation within lookahead window
-        lookahead_time = 60  # seconds
-        
-        for i in range(NUM_INTRUDERS):
-            int_idx = i + 1
-            _, current_distance = bs.tools.geo.kwikqdrdist(
-                bs.traf.lat[ac_idx], bs.traf.lon[ac_idx], 
-                bs.traf.lat[int_idx], bs.traf.lon[int_idx]
-            )
-            
-            # Simple conflict prediction (could be enhanced with trajectory prediction)
-            if current_distance < self.intrusion_distance * 1.5:  # Expanded margin for prediction
-                conflict_present = True
-                break
-        
-        self.ground_truth_conflicts.append(conflict_present)
-
     def _check_agent_alert(self, observation, action):
         """Check if agent is alerting/intervening based on action magnitude"""
         action_magnitude = abs(action[0]) if hasattr(action, '__len__') else abs(action)
         agent_alerted = action_magnitude > self.action_deadband
-        self.agent_alerts.append(agent_alerted)
         return agent_alerted
-
-    def _update_confusion_matrix(self, agent_alerted):
-        """Update confusion matrix for FP/FN calculation"""
-        if len(self.ground_truth_conflicts) > 0:
-            conflict_present = self.ground_truth_conflicts[-1]
-            
-            if conflict_present and agent_alerted:
-                self.true_positives += 1
-            elif conflict_present and not agent_alerted:
-                self.false_negatives += 1
-            elif not conflict_present and agent_alerted:
-                self.false_positives += 1
-            else:
-                self.true_negatives += 1
 
     def _track_intervention_metrics(self, action):
         """Track efficiency and intervention metrics"""
@@ -550,7 +755,7 @@ class CustomHorizontalCREnv(gym.Env):
         self.last_heading = current_heading
 
     def _detect_hallucinations(self, observation, action):
-        """Detect potential ML hallucinations with severity-based penalties"""
+        """Detect potential ML hallucinations with enhanced severity-based penalties"""
         if not self.enable_hallucination_detection:
             return
         
@@ -583,6 +788,12 @@ class CustomHorizontalCREnv(gym.Env):
             self.safety_margin_violations += 1
             hallucination_detected = True
             severity_score += 1.0 - safety_ratio
+            
+        # 5. Trajectory prediction errors
+        prediction_error = self._check_trajectory_prediction_error()
+        if prediction_error > 0.6:
+            hallucination_detected = True
+            severity_score += prediction_error
         
         if hallucination_detected:
             self.hallucination_events.append({
@@ -591,6 +802,7 @@ class CustomHorizontalCREnv(gym.Env):
                 'boundary_proximity': boundary_proximity,
                 'anomaly_score': anomaly_score,
                 'safety_ratio': safety_ratio,
+                'prediction_error': prediction_error,
                 'severity_score': severity_score,
                 'action': action[0] if hasattr(action, '__len__') else action,
                 'episode_id': self.episode_id
@@ -611,8 +823,10 @@ class CustomHorizontalCREnv(gym.Env):
             'safety_margin_level': self.safety_margin_level,
             'intrusion_distance': self.intrusion_distance,
             'complexity_level': self.complexity_level,
+            'curriculum_learning': self.curriculum_learning,
+            'domain_randomization': self.domain_randomization,
             
-            # Ground-truth conflict metrics (FP/FN)
+            # Ground-truth conflict metrics (FP/FN) with temporal filtering
             'conflict_present': self.ground_truth_conflicts[-1] if self.ground_truth_conflicts else False,
             'alert_triggered': self.agent_alerts[-1] if self.agent_alerts else False,
             'false_positives': self.false_positives,
@@ -643,30 +857,6 @@ class CustomHorizontalCREnv(gym.Env):
             })
         
         return base_info
-
-    def _get_reward(self):
-        """Calculate reward with severity-based hallucination penalties"""
-        reach_reward = self._check_waypoint()
-        drift_reward = self._check_drift()
-        intrusion_reward = self._check_intrusion()
-        
-        # Add severity-based hallucination penalty
-        hallucination_reward = 0
-        if self.enable_hallucination_detection and len(self.hallucination_events) > 0:
-            # Get recent hallucination events from this timestep
-            recent_events = [event for event in self.hallucination_events 
-                           if event['step'] >= self.timestep_count]
-            
-            if recent_events:
-                # Apply penalty proportional to severity
-                total_severity = sum(event['severity_score'] for event in recent_events)
-                hallucination_reward = BASE_HALLUCINATION_PENALTY * total_severity
-
-        total_reward = reach_reward + drift_reward + intrusion_reward + hallucination_reward
-        self.total_reward += total_reward
-
-        terminated = 0 not in self.wpt_reach if self.wpt_reach else False
-        return total_reward, terminated
         
     def _check_waypoint(self):
         """Check waypoint reach status"""

@@ -511,7 +511,7 @@ class CustomVerticalCREnv(gym.Env):
             
             # Check for potential vertical conflicts
             if (horizontal_distance < INTRUSION_DISTANCE and 
-                vertical_distance < self.vertical_margin * 1.5):  # Expanded margin for prediction
+                vertical_distance < self.vertical_margin):  # Not Expanded margin for false prediction
                 conflict_present = True
                 break
         
@@ -1101,7 +1101,7 @@ class CustomVerticalCREnv(gym.Env):
                 vertical_separation < self.vertical_margin):
                 color = (255, 0, 0)      # Red - critical conflict
             elif (horizontal_separation < INTRUSION_DISTANCE and 
-                  vertical_separation < self.vertical_margin * 1.5):
+                  vertical_separation < self.vertical_margin):
                 color = (255, 165, 0)    # Orange - warning
             elif vertical_separation < self.vertical_margin * 2:
                 color = (255, 255, 0)    # Yellow - caution

@@ -196,7 +196,7 @@ class CustomVerticalCREnv(gym.Env):
         # Temporal filtering for conflict detection
         self.conflict_history = []
         self.alert_history = []
-        self.temporal_window = 3  # Require conflicts to persist for 3 timesteps
+        self.temporal_window = 5  # Require conflicts to persist for 5 timesteps
         
         # Efficiency and intervention metrics
         self.intervention_count = 0

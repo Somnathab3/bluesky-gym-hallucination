@@ -443,7 +443,7 @@ class CustomHorizontalCREnv(gym.Env):
             )
             
             # Simple conflict prediction (could be enhanced with trajectory prediction)
-            if current_distance < self.intrusion_distance * 1.5:  # Expanded margin for prediction
+            if current_distance < self.intrusion_distance:  # Expanded margin for prediction
                 conflict_present = True
                 break
         

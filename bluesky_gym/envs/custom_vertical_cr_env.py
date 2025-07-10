@@ -202,7 +202,7 @@ class CustomVerticalCREnv(gym.Env):
         self.intervention_count = 0
         self.cumulative_descent_deviation = 0.0
         self.last_vertical_speed = 0.0
-        self.action_deadband = 0.1  # Minimum action magnitude to count as intervention
+        self.action_deadband = 0.2  # Minimum action magnitude to count as intervention
         
         # Envelope violation tracking
         self.envelope_violation_score = 0.0

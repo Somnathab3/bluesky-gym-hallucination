@@ -109,7 +109,12 @@ class CustomHorizontalCREnv(gym.Env):
         self._generate_waypoint()
 
         # Sample decision frequency
-        self.current_action_frequency = np.random.randint(*self.action_frequency_range)
+        low, high = self.action_frequency_range
+        # Ensure valid range for randint
+        if high <= low:
+            self.current_action_frequency = int(low)
+        else:
+            self.current_action_frequency = int(np.random.randint(low, high + 1))
 
         obs = self._get_obs()
         info = self._get_info()

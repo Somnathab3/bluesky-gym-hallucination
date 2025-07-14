@@ -137,8 +137,10 @@ class CustomHorizontalCREnv(gym.Env):
             speed = float(np.random.uniform(*self.intruder_speed_range))
             bs.traf.creconfs(acid=f'{i}', actype="A320",
                              targetidx=target_idx,
-                             dpsi=dpsi, dcpa=cpa, tlosh=tlosh,
-                             gs=speed)
+                             dpsi=dpsi, dcpa=cpa, tlosh=tlosh)
+            # override intruder speed
+            intr_idx = bs.traf.id2idx(f'{i}')
+            bs.traf.gs[intr_idx] = speed
 
     def _generate_waypoint(self, acid='KL001'):
         self.wpt_lat, self.wpt_lon, self.wpt_reach = [], [], []

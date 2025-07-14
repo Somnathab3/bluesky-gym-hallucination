@@ -30,9 +30,9 @@ NM2KM = 1.852
 
 ACTION_FREQUENCY = 10
 
-class HorizontalCREnv(gym.Env):
+class CustomHorizontalCREnv(gym.Env):
     """ 
-    Horizontal Conflict Resolution Environment
+    Custom Horizontal Conflict Resolution Environment
     Supports stress-testing via configurable intruder speeds, headings,
     sensor noise, and variable action frequency.
     """
